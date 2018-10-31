@@ -25,6 +25,7 @@ Example usage: hyper2color -i data.img -o calibrated_color.tif -t D65
 OPTIONS
 -------
 
+```
    --input,       -i:  input hyperspectral cube
    --output,      -o:  output TIFF image
    --temperature, -t:  output color temperature: D65 (default), D50 or temperature in K)
@@ -37,6 +38,7 @@ OPTIONS
    --compression  -m:  TIFF output compression: none (default), deflate, lzw or jpeg
    --help,        -h:  this help message
    --verbose,     -v:  verbose output
+```
 
 
 REQUIREMENTS
