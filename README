@@ -1,0 +1,71 @@
+hyper2color
+===========
+
+[![GPLv3 Licensed](https://img.shields.io/badge/license-GPLv3-blue.svg)](https://www.gnu.org/copyleft/gpl.html)
+
+
+ABOUT
+-----
+hyper2color is a tool for generating accurate colorimetric images from hyperspectral reflectance data.
+
+Output is in TIFF format using the requested illuminant or color temperature using the 
+sRGB, AdobeRGB or CIE L*a*b* output color spaces and using requested compression.
+
+Requested color temperature can be a standard temperature (D65, D50, D75, D93, A)
+or a temperature in degrees Kelvin (eg: 5000 for a temperature of 5000K)
+Alternatively, an artibrary illuminant power spectrum can be provided 
+containing a list of wavelengths and power values
+
+Output bits per channel can be 8, 16 or 32 bits, where 8 and 16 are encoded
+as unsigned integer and 32 is encoded as floating point
+
+Example usage: hyper2color -i data.img -o calibrated_color.tif -t D65 
+
+
+OPTIONS
+-------
+
+   --input,       -i:  input hyperspectral cube
+   --output,      -o:  output TIFF image
+   --temperature, -t:  output color temperature: D65 (default), D50 or temperature in K)
+   --colorspace,  -s:  output color space: CIELAB, sRGB (default) or AdobeRGB
+   --power,       -p:  illuminant power spectrum file (optional)
+   --bits,        -b:  output bits per channel: 8 (default), 16 or 32 bits
+   --width,       -x:  hyperspectral image width
+   --height,      -y:  hyperspectral image height
+   --channels,    -c:  number of bands in hyperspectral cube
+   --compression  -m:  TIFF output compression: none (default), deflate, lzw or jpeg
+   --help,        -h:  this help message
+   --verbose,     -v:  verbose output
+
+
+REQUIREMENTS
+------------
+Compilation requirements: libgsl, libtiff, zlib and libjpeg development libraries.
+
+
+BUILDING
+--------
+Use the standard autoconf build process to compile.
+
+If this is an SVN or Git development version, first generate the autoconfigure
+environment using autogen.sh:
+
+    ./autogen.sh
+
+Otherwise for release versions, use configure directly:
+
+    ./configure
+    make
+
+
+LICENCE
+-------
+hyper2color is released under the GNU General Public License (GPL). See the copyright
+notice COPYING in this directory for licensing details or go to
+http://www.gnu.org/licenses/gpl.html for more details.
+
+
+------------------------------------------------------------------------------------
+(c) 2015-2018 Ruven Pillay <ruven@users.sourceforge.net>
+
