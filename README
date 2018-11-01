@@ -14,12 +14,37 @@ sRGB, AdobeRGB or CIE L*a*b* output color spaces and using requested compression
 Requested color temperature can be a standard temperature (D65, D50, D75, D93, A)
 or a temperature in degrees Kelvin (eg: 5000 for a temperature of 5000K)
 Alternatively, an artibrary illuminant power spectrum can be provided 
-containing a list of wavelengths and power values
+containing a list of wavelengths and power values.
+
+Input files must be in 16bit BIL (Band Interleaved Line) format. Currently only
+hyperspectral data with hyspex headers are supported, but ENVI-compatible header
+support will be added soon.
 
 Output bits per channel can be 8, 16 or 32 bits, where 8 and 16 are encoded
-as unsigned integer and 32 is encoded as floating point
+as unsigned integer and 32 is encoded as floating point.
 
 Example usage: hyper2color -i data.img -o calibrated_color.tif -t D65 
+
+
+
+REQUIREMENTS
+------------
+Compilation requirements: libgsl, libtiff, zlib and libjpeg development and runtime libraries.
+
+
+BUILDING
+--------
+Use the standard autoconf build process to compile.
+
+If this is an SVN or Git development version, first generate the autoconfigure
+environment using autogen.sh:
+
+    ./autogen.sh
+
+Otherwise for release versions, use configure directly:
+
+    ./configure
+    make
 
 
 OPTIONS
@@ -39,27 +64,6 @@ OPTIONS
    --help,        -h:  this help message
    --verbose,     -v:  verbose output
 ```
-
-
-REQUIREMENTS
-------------
-Compilation requirements: libgsl, libtiff, zlib and libjpeg development libraries.
-
-
-BUILDING
---------
-Use the standard autoconf build process to compile.
-
-If this is an SVN or Git development version, first generate the autoconfigure
-environment using autogen.sh:
-
-    ./autogen.sh
-
-Otherwise for release versions, use configure directly:
-
-    ./configure
-    make
-
 
 LICENCE
 -------
