@@ -3,7 +3,7 @@
     using a given illuminant.
 
 
-    Copyright (C) 2015-2018 Ruven Pillay <ruven@users.sourceforge.net>
+    Copyright (C) 2015-2019 Ruven Pillay <ruven@users.sourceforge.net>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -673,6 +673,15 @@ int main( int argc, char *argv[] )
       printf( "TIFF write error at scanline %d \n", j );
       break;
     }
+
+
+    /* Report progress
+     */
+    if( verbose ){
+      printf( "Processing: %3d\%\r", (int)(j*100.0/header.scanlines) );
+      fflush( stdout );
+    }
+
   }
 
   /* Free our line of color output values
