@@ -1,7 +1,7 @@
 /*
     Hyspex header structure
 
-    Copyright (c) 2015-2018, Ruven <ruven@users.sourceforge.net>
+    Copyright (c) 2015-2021, Ruven <ruven@users.sourceforge.net>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -40,7 +40,9 @@ typedef struct {
 } hyspex_header;
 
 
+int is_hyspex( FILE*, hyspex_header* );
 int parse_hyspex_header( FILE*, hyspex_header* );
 int load_hyspex_pixel( FILE*, hyspex_header*, double*, int, int );
 int load_hyspex_bil( FILE*, hyspex_header*, void*, int );
+void update_width( hyspex_header*, int );
 void free_hyspex( hyspex_header* );

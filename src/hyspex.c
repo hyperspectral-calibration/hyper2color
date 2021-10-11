@@ -1,7 +1,7 @@
 /*
     Hyspex header routines
 
-    Copyright (c) 2015-2018, Ruven <ruven@users.sourceforge.net>
+    Copyright (c) 2015-2021, Ruven <ruven@users.sourceforge.net>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -28,8 +28,31 @@
 #define HYSPEX_MAGIC "HYSPEX\0\0"
 #define HYSPEX_SIZE 8
 #define HYSPEX_BANDS 1961
+#define HYSPEX_WIDTH 1965
 #define HYSPEX_SCANLINES 2073
 #define HYSPEX_WAVELENGTHS 2181
+
+
+
+int is_hyspex( FILE* s, hyspex_header *header )
+{
+  /* Rewind our file if necessary
+   */
+  rewind( s );
+
+  /* Hyspex Magic
+   */
+  unsigned char magic[8];
+  if( fread( magic, 1, 8, s ) != 8 ){
+    printf("Unable to read header\n");
+    return 1;
+  }
+
+  if( memcmp( magic, HYSPEX_MAGIC, 8 ) == 0 ) return 1;
+  else return 0;
+
+}
+
 
 
 int parse_envi_header( FILE *s, hyspex_header *header )
@@ -82,7 +105,7 @@ int parse_hyspex_header( FILE *s, hyspex_header *header )
   if( memcmp( magic, HYSPEX_MAGIC, 8 ) != 0 ){
     printf("%s: Not a Hyspex file\n", magic );
   }
-
+  
   /* Header size
    */
   fseek( s, HYSPEX_SIZE, SEEK_SET );
@@ -226,6 +249,12 @@ int load_hyspex_bil( FILE* s, hyspex_header *header, void *buffer, int y )
   return size;
 }
 
+
+void update_width( hyspex_header *header, int new_width )
+{
+  unsigned char *ptr = (unsigned char*) header;
+  ptr[HYSPEX_WIDTH] = (int) new_width;
+}
 
 
 /* Free memory

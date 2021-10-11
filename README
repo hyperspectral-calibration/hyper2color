@@ -9,16 +9,16 @@ ABOUT
 hyper2color is a tool for generating accurate colorimetric images from hyperspectral reflectance data.
 
 Output is in TIFF format using the requested illuminant or color temperature using the 
-sRGB, AdobeRGB or CIE L*a*b* output color spaces and using requested compression.
+sRGB, AdobeRGB or CIELAB output color spaces and using requested compression.
 
 Requested color temperature can be a standard temperature (D65, D50, D75, D93, A)
 or a temperature in degrees Kelvin (eg: 5000 for a temperature of 5000K)
 Alternatively, an artibrary illuminant power spectrum can be provided 
 containing a list of wavelengths and power values.
 
-Input files must be in 16bit BIL (Band Interleaved Line) format. Currently only
-hyperspectral data with hyspex headers are supported, but ENVI-compatible header
-support will be added soon.
+Input files must be in 16bit BIL (Band Interleaved Line) format. Currently only headers from Hyspex
+cameras can be read automatically. For ENVI-compatible data, set the width, height, number of bands
+and list of wavelengths manually on the command line.
 
 Output bits per channel can be 8, 16 or 32 bits, where 8 and 16 are encoded
 as unsigned integer and 32 is encoded as floating point.
@@ -60,6 +60,7 @@ OPTIONS
    --width,       -x:  hyperspectral image width
    --height,      -y:  hyperspectral image height
    --channels,    -c:  number of bands in hyperspectral cube
+   --wavelengths, -w:  list of center wavelengths for each channel
    --compression  -m:  TIFF output compression: none (default), deflate, lzw or jpeg
    --help,        -h:  this help message
    --verbose,     -v:  verbose output

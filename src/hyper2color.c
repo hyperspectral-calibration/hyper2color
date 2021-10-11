@@ -3,7 +3,7 @@
     using a given illuminant.
 
 
-    Copyright (C) 2015-2019 Ruven Pillay <ruven@users.sourceforge.net>
+    Copyright (C) 2015-2021 Ruven Pillay <ruven@users.sourceforge.net>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -81,6 +81,7 @@ void help( void ){
   --width,       -x:  hyperspectral image width\n \
   --height,      -y:  hyperspectral image height\n \
   --channels,    -c:  number of bands in hyperspectral cube\n \
+  --wavelengths, -w:  list of center wavelengths for each band\n \
   --compression  -m:  TIFF output compression: none (default), deflate, lzw or jpeg\n \
   --help,        -h:  this help message\n \
   --verbose,     -v:  verbose output\n\n\n" );
@@ -172,6 +173,7 @@ int main( int argc, char *argv[] )
   int width = 0;
   int height = 0;
   int bands = 0;
+  double *wavelengths = NULL;
 
   int verbose = 0;
   FILE *in = NULL;
@@ -212,13 +214,14 @@ int main( int argc, char *argv[] )
       {"width", 1, 0, 'x'},
       {"height", 1, 0, 'y'},
       {"channels", 1, 0, 'c'},
+      {"wavelengths", 1, 0, 'w'},
       {"compression", 1, 0, 'm'},
       {"help", 0, 0, 'h'},
       {"verbose", 0, 0, 'v'},
       {0, 0, 0, 0}
     };
 
-    c = getopt_long( argc, argv, "i:o:t:s:b:x:y:c:m:vh", long_options, &option_index );
+    c = getopt_long( argc, argv, "i:o:t:s:b:x:y:c:w:m:vh", long_options, &option_index );
 
     if( c == -1 ){
       break;
@@ -301,6 +304,34 @@ int main( int argc, char *argv[] )
       /* Channels
        */
       bands = atoi( optarg );
+      break;
+
+    case 'w':
+      /* Wavelengths: comma separated list with no spaces
+       */
+      ;
+      char* u = strdup( optarg );
+
+      /* Remove any white space
+       */
+      char* s = u;
+      char* d = s;
+      do {
+        while (*d == ' ') {
+	  ++d;
+        }
+      } while (*s++ = *d++);
+      s = u;
+
+      /* Tokenize our string and load into an array
+       */
+      char* token = strtok(s, ",");
+      wavelengths = malloc( sizeof(double)*bands );
+      int n = 0;
+      while( token ){
+	wavelengths[n++] = atof( token );
+	token = strtok(NULL, ",");
+      }
       break;
 
     case 'm':
@@ -405,10 +436,14 @@ int main( int argc, char *argv[] )
   if( height != 0 ) header.scanlines = height;
   if( bands != 0 ){
     header.bands = bands;
-    //header.wavelengths = malloc( sizeof(float) * bands );
-    if( bands == 40 ) header.wavelengths = (double*) wavelengths40;
-    else if( bands == 80 ) header.wavelengths = (double*) wavelengths80;
-    else if( bands == 160 ) header.wavelengths = (double*) wavelengths160;
+    if( wavelengths ) header.wavelengths = wavelengths;
+    else{
+      /* Otherwise set some defaults for Hyspex VNIR cameras
+       */
+      if( bands == 40 ) header.wavelengths = (double*) wavelengths40;
+      else if( bands == 80 ) header.wavelengths = (double*) wavelengths80;
+      else if( bands == 160 ) header.wavelengths = (double*) wavelengths160;
+    }
     header.bpp = 2;
   }
 
@@ -678,7 +713,7 @@ int main( int argc, char *argv[] )
     /* Report progress
      */
     if( verbose ){
-      printf( "Processing: %3d\%\r", (int)(j*100.0/header.scanlines) );
+      printf( "Processing: %3d\%%\r", (int)(j*100.0/header.scanlines) );
       fflush( stdout );
     }
 
