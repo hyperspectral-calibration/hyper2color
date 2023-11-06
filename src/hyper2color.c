@@ -3,7 +3,7 @@
     using a given illuminant.
 
 
-    Copyright (C) 2015-2021 Ruven Pillay <ruven@users.sourceforge.net>
+    Copyright (C) 2015-2023 Ruven Pillay <ruven@users.sourceforge.net>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -181,7 +181,7 @@ int main( int argc, char *argv[] )
 
   /* Output color space (default: sRGB)
    */
-  uint16 colorspace = PHOTOMETRIC_RGB;
+  uint16_t colorspace = PHOTOMETRIC_RGB;
 
   /* Output color profile - 0: None, 1: sRGB, 2: AdobeRGB
    */
@@ -506,7 +506,7 @@ int main( int argc, char *argv[] )
   }
   double Z_match[471];
   for( k=0; k<471; k++ ){
-    Y_match[k] = cie_color_match[k][3];
+    Z_match[k] = cie_color_match[k][3];
   }
 
 
