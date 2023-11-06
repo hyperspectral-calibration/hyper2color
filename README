@@ -60,7 +60,7 @@ OPTIONS
    --width,       -x:  hyperspectral image width
    --height,      -y:  hyperspectral image height
    --channels,    -c:  number of bands in hyperspectral cube
-   --wavelengths, -w:  list of center wavelengths for each channel
+   --wavelengths, -w:  comma separated list of center wavelengths for each channel
    --compression  -m:  TIFF output compression: none (default), deflate, lzw or jpeg
    --help,        -h:  this help message
    --verbose,     -v:  verbose output
@@ -74,4 +74,4 @@ http://www.gnu.org/licenses/gpl.html for more details.
 
 
 ------------------------------------------------------------------------------------
-(c) 2015-2019 Ruven Pillay <ruven@users.sourceforge.net>
+(c) 2015-2023 Ruven Pillay <ruven@users.sourceforge.net>
