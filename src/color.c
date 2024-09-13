@@ -49,7 +49,7 @@ void XYZ2LAB( float X, float Y, float Z, float *L, float *a, float *b ){
 
 
 
-/* Apply sRGB gamma of 2.4
+/* Apply sRGB gamma, which is linear at low input levels
  */
 static float _sRGB_Gamma( float c ){
   float alpha = 0.055;
