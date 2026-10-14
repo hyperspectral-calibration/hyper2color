@@ -92,6 +92,8 @@ AC_CHECK_LIB([gsl],[gsl_blas_dgemm])
 
 AC_CHECK_HEADERS([gsl/gsl_spline.h])
 
+AC_SUBST(INCLUDES)
+AC_SUBST(LIBS)
 AC_CONFIG_FILES([Makefile \
 		 src/Makefile])
 AC_OUTPUT

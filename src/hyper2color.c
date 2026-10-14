@@ -3,7 +3,8 @@
     using a given illuminant.
 
 
-    Copyright (C) 2015-2023 Ruven Pillay <ruven@users.sourceforge.net>
+    Copyright (C) 2015-2026 Ruven Pillay <ruven@users.sourceforge.net>
+
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -37,6 +38,7 @@
 #include <gsl/gsl_spline.h>
 #include <gsl/gsl_integration.h>
 #include "tiffio.h"
+
 
 /* Load our colorimetric matrices and functions
  */
@@ -103,49 +105,6 @@ double calculate_power_spectrum( int bbTemp, int wavelength ){
   return power;
 }
 
-
-
-void calculate_XYZ( hyspex_header *header, double *spectrum, double **power_spectrum, double **cie_color_match )
-{
-
-  /* Interpolate using GSL
-   */
-  gsl_interp_accel *acc = gsl_interp_accel_alloc();
-  gsl_spline *spline = gsl_spline_alloc( gsl_interp_cspline, header->bands );
-  gsl_spline_init( spline, header->wavelengths, spectrum, header->bands );
-
-
-  int firstwav = 410;
-
-  int tr = firstwav - cie_color_match[0][0];
-  int te = firstwav - power_spectrum[0][0];
-
-
-  double X, Y, Z, norm;
-  X = Y = Z = norm = 0.0;
-
-  int k;
-  for( k=0; k<=830-firstwav; k+=5 ){
-
-    double val = gsl_spline_eval(spline, k, acc);
-    if( val < 0 ) val = 0.0;
-
-    X += val * cie_color_match[tr+k][1] * power_spectrum[te+k][1];
-    Y += val * cie_color_match[tr+k][2] * power_spectrum[te+k][1];
-    Z += val * cie_color_match[tr+k][3] * power_spectrum[te+k][1];
-    norm += cie_color_match[tr+k][2] * power_spectrum[te+k][1];
-  }
-
-  /* Free our interpolator
-   */
-  gsl_spline_free (spline);
-  gsl_interp_accel_free (acc);
-
-  float XX = (float)( (X * 100.0) / (norm) );
-  float YY = (float)( (Y * 100.0) / (norm) );
-  float ZZ = (float)( (Z * 100.0) / (norm) );
-
-}
 
 typedef struct { gsl_spline* s; gsl_interp_accel *a; double *cie; double *power; } my_f_params;
 
@@ -309,7 +268,6 @@ int main( int argc, char *argv[] )
     case 'w':
       /* Wavelengths: comma separated list with no spaces
        */
-      ;
       char* u = strdup( optarg );
 
       /* Remove any white space
@@ -463,33 +421,49 @@ int main( int argc, char *argv[] )
   unsigned short *scanline_spectrum;
   scanline_spectrum = malloc( header.samples * sizeof(unsigned short) * header.bands );
 
+  /* Determine the range of wavelengths we can use
+   */
+  int firstwav = ceil( header.wavelengths[0] ) - 10;
+  firstwav = 360;
+  int finalwav = floor( header.wavelengths[header.bands-1] );
+  int maxwav = cie_color_match[0][0] - 1 + sizeof(cie_color_match) / (sizeof(double)*4);
+
+  if( finalwav > maxwav ) finalwav = maxwav;       // Limit this to maximum wavelength in CIE standards
+  if( verbose ) printf( "Integrating between %d and %d nm for color calculation\n", firstwav, finalwav );
+
   double spectrum[320];
 
   /* Load up our illuminant power spectrum
    */
   double power_spectrum[531][2];
-  for( k=300; k<=830; k++ ){
+  int k0 = D65[0][0];
 
-    power_spectrum[k-300][0] = k;
+  /* Load the appropriate power spectrum for our wavelength range
+   */
+  for( k=k0; k<=finalwav; k++ ){                  // k = wavelength in nm
 
-    if( temperature == -1 ) power_spectrum[k-300][1] = CIE_A[k-300][1];
-    else if( temperature == 6504 ) power_spectrum[k-300][1] = D65[k-300][1];
-    else power_spectrum[k-300][1] = calculate_power_spectrum( temperature, k );
+    power_spectrum[k-k0][0] = k;
+
+    if( temperature == -1 ) power_spectrum[k-k0][1] = CIE_A[k-k0][1];
+    else if( temperature == 6504 ) power_spectrum[k-k0][1] = D65[k-k0][1];
+    else power_spectrum[k-k0][1] = calculate_power_spectrum( temperature, k );
   }
 
 
-  int firstwav = ceil( header.wavelengths[0] );
-
-  int tr = firstwav - cie_color_match[0][0];
-  int te = firstwav - power_spectrum[0][0];
+  int tr = firstwav - cie_color_match[0][0];    // Array offset for CIE color matching function
+  int te = firstwav - power_spectrum[0][0];     // Array offset for power spectrum
 
 
-  /* Calculate CIE normalization
+  /* Calculate CIE normalization only once using the sum of CIE y * power spectrum
    */
   double norm = 0.0;
-  for( k=0; k<=830-firstwav; k++ ){
+  int step = 5;     // Interpolation step
+
+  for( k=0; k<=finalwav-firstwav; k+=step ){
     norm += cie_color_match[tr+k][2] * power_spectrum[te+k][1];
   }
+
+
   double power[471];
   for( k=0; k<471; k++ ){
     power[k] = power_spectrum[k+60][1];
@@ -508,6 +482,7 @@ int main( int argc, char *argv[] )
   for( k=0; k<471; k++ ){
     Z_match[k] = cie_color_match[k][3];
   }
+
 
 
 
@@ -583,10 +558,16 @@ int main( int argc, char *argv[] )
 
 
   /* Set up our integration function
-   */
   gsl_function F;
   F.function = &f;
   gsl_integration_workspace *w = gsl_integration_workspace_alloc( 2000 );
+  */
+
+
+  /* Initialize our GSL interpolation structures
+   */
+  gsl_interp_accel *acc = gsl_interp_accel_alloc();
+  gsl_spline *spline = gsl_spline_alloc( gsl_interp_akima, header.bands );
 
 
   /* Loop through our pixels and calculate the CIE XYZ
@@ -595,8 +576,12 @@ int main( int argc, char *argv[] )
 
     /* Load an entire line in BIL (Band Interleaved Line) format
      */
-    load_hyspex_bil( in, &header, scanline_spectrum, j );
+    n = load_hyspex_bil( in, &header, scanline_spectrum, j );
+    if( n != header.samples*header.bands ) printf( "Error reading BIL\n" );
 
+
+    /* Loop through each pixel on this line
+     */
     for( i=0; i<header.samples; i++ ){
 
       /* Extract the spectral values for pixel i, j
@@ -609,36 +594,39 @@ int main( int argc, char *argv[] )
 
       /* Interpolate using GSL
        */
-      gsl_interp_accel *acc = gsl_interp_accel_alloc();
-      gsl_spline *spline = gsl_spline_alloc( gsl_interp_linear, header.bands );
       gsl_spline_init( spline, header.wavelengths, spectrum, header.bands );
 
-
+      /* Set our X, Y and Z to zero
+       */
       double X, Y, Z;
+      double val;
       X = Y = Z = 0.0;
 
+      /* Integrate over each wavelength
+       */
+      for( k=0; k<=finalwav-firstwav; k+=step ){
 
-      //#pragma omp parallel for
-      for( k=0; k<=830-firstwav; k++ ){
+	if( k+firstwav >= header.wavelengths[0] ) val = gsl_spline_eval(spline, k+firstwav, acc);
+	else val = spectrum[0];
 
-	double val = gsl_spline_eval(spline, k+firstwav, acc);
 	if( val < 0 ) val = 0.0;
+	if( val > 1.0 ) val = 1.0;
 
 	X += val * cie_color_match[tr+k][1] * power_spectrum[te+k][1];
 	Y += val * cie_color_match[tr+k][2] * power_spectrum[te+k][1];
 	Z += val * cie_color_match[tr+k][3] * power_spectrum[te+k][1];
       }
 
-
-      /* Free our interpolator
+      /* X, Y, Z values need to be multiplied by 100 and normalized
        */
-      gsl_spline_free (spline);
-      gsl_interp_accel_free (acc);
-
-
       float XX = (float)( (X * 100.0) / (norm) );
       float YY = (float)( (Y * 100.0) / (norm) );
       float ZZ = (float)( (Z * 100.0) / (norm) );
+
+
+      /* Pixel index
+       */
+      int index = i * 3;
 
 
       /* Convert to RGB (sRGB or AdobeRGB)
@@ -662,19 +650,19 @@ int main( int argc, char *argv[] )
 	}
 
 	if( bits_per_sample == 32 ){
-	  ((float*)calculated_color)[i*3]     = R;
-	  ((float*)calculated_color)[i*3 + 1] = G;
-	  ((float*)calculated_color)[i*3 + 2] = B;
+	  ((float*)calculated_color)[index]     = R;
+	  ((float*)calculated_color)[index + 1] = G;
+	  ((float*)calculated_color)[index + 2] = B;
 	}
 	else if( bits_per_sample == 16 ){
-	  ((unsigned short*)calculated_color)[i*3]     = (unsigned short)( R * 65535.0 );
-	  ((unsigned short*)calculated_color)[i*3 + 1] = (unsigned short)( G * 65535.0 );
-	  ((unsigned short*)calculated_color)[i*3 + 2] = (unsigned short)( B * 65535.0 );
+	  ((unsigned short*)calculated_color)[index]     = (unsigned short)( R * 65535.0 );
+	  ((unsigned short*)calculated_color)[index + 1] = (unsigned short)( G * 65535.0 );
+	  ((unsigned short*)calculated_color)[index + 2] = (unsigned short)( B * 65535.0 );
 	}
 	else{
-	  ((unsigned char*)calculated_color)[i*3]     = (unsigned char)( R * 255.0 );
-	  ((unsigned char*)calculated_color)[i*3 + 1] = (unsigned char)( G * 255.0 );
-	  ((unsigned char*)calculated_color)[i*3 + 2] = (unsigned char)( B * 255.0 );
+	  ((unsigned char*)calculated_color)[index]     = (unsigned char)( R * 255.0 );
+	  ((unsigned char*)calculated_color)[index + 1] = (unsigned char)( G * 255.0 );
+	  ((unsigned char*)calculated_color)[index + 2] = (unsigned char)( B * 255.0 );
 	}
       }
 
@@ -684,19 +672,19 @@ int main( int argc, char *argv[] )
 	XYZ2LAB(XX,YY,ZZ,&L,&a,&b);
 
 	if( bits_per_sample == 8 ){
-	  ((unsigned char*)calculated_color)[i*3]     = (unsigned char)( L * 2.55 );
-	  ((unsigned char*)calculated_color)[i*3 + 1] = (signed char) (a);
-	  ((unsigned char*)calculated_color)[i*3 + 2] = (signed char) (b);
+	  ((unsigned char*)calculated_color)[index]     = (unsigned char)( L * 2.55 );
+	  ((unsigned char*)calculated_color)[index + 1] = (signed char) (a);
+	  ((unsigned char*)calculated_color)[index + 2] = (signed char) (b);
 	}
 	else if( bits_per_sample == 16 ){
-	  ((unsigned short*)calculated_color)[i*3]     = (unsigned short)( L * 655.35 );
-	  ((unsigned short*)calculated_color)[i*3 + 1] = (signed short)( a * 255.0 );
-	  ((unsigned short*)calculated_color)[i*3 + 2] = (signed short)( b * 255.0 );
+	  ((unsigned short*)calculated_color)[index]     = (unsigned short)( L * 655.35 );
+	  ((unsigned short*)calculated_color)[index + 1] = (signed short)( a * 255.0 );
+	  ((unsigned short*)calculated_color)[index + 2] = (signed short)( b * 255.0 );
 	}
 	else{
-          ((float*)calculated_color)[i*3] = L;
-          ((float*)calculated_color)[i*3 + 1] = a;
-	  ((float*)calculated_color)[i*3 + 2] = b;	  
+          ((float*)calculated_color)[index]     = L;
+          ((float*)calculated_color)[index + 1] = a;
+	  ((float*)calculated_color)[index + 2] = b;
 	}
       }
     }
@@ -713,11 +701,18 @@ int main( int argc, char *argv[] )
     /* Report progress
      */
     if( verbose ){
-      printf( "Processing: %3d\%%\r", (int)(j*100.0/header.scanlines) );
+      printf( "Processing: %.2f\%%\r", (float)(j*100.0/header.scanlines) );
       fflush( stdout );
     }
 
   }
+
+
+  /* Free our interpolator
+   */
+  gsl_spline_free (spline);
+  gsl_interp_accel_free (acc);
+
 
   /* Free our line of color output values
    */
@@ -726,9 +721,8 @@ int main( int argc, char *argv[] )
 
 
   /* Free our integration workspace
-   */
   gsl_integration_workspace_free( w );
-
+  */
 
   /* Close our files
    */
