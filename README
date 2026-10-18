@@ -2,6 +2,8 @@ hyper2color
 ===========
 
 [![GPLv3 Licensed](https://img.shields.io/badge/license-GPLv3-blue.svg)](https://www.gnu.org/copyleft/gpl.html)
+[![Build Status](https://github.com/hyperspectral-calibration/hyper2color/actions/workflows/c-cpp.yml/badge.svg?branch=master)](https://github.com/hyperspectral-calibration/hyper2color/actions/workflows/c-cpp.yml)
+
 
 
 ABOUT
@@ -29,7 +31,7 @@ Example usage: hyper2color -i data.img -o calibrated_color.tif -t D65
 
 REQUIREMENTS
 ------------
-Compilation requirements: libgsl, libtiff, zlib and libjpeg development and runtime libraries.
+Compilation requirements: libtiff development and runtime libraries
 
 
 BUILDING
