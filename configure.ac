@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.69])
-AC_INIT([hyper2color], [0.5], [ruven@users.sourceforge.net])
+AC_INIT([hyper2color], [0.6], [ruven@users.sourceforge.net])
 AM_INIT_AUTOMAKE
 
 
@@ -20,14 +20,15 @@ AC_TYPE_SSIZE_T
 
 # Checks for library functions.
 AC_FUNC_MALLOC
-AC_CHECK_FUNCS([floor pow])
+AC_SEARCH_LIBS([floor], [m], [], [AC_MSG_ERROR([libm not found])])
 
-# Check for OpenMP
-AC_OPENMP
-AS_IF([test "x$enable_openmp" != "xyes"], [
- INCLUDES="$INCLUDES $OPENMP_CFLAGS"
- LIBS="$LIBS $OPENMP_CFLAGS"
-])
+# Check for OpenMP (default on; use --disable-openmp for a serial build)
+AC_ARG_ENABLE([openmp],
+              [AS_HELP_STRING([--disable-openmp], [build without OpenMP parallelization])],
+              [],
+              [enable_openmp=yes])
+AS_IF([test "x$enable_openmp" = "xyes"], [AC_OPENMP])
+AC_SUBST([OPENMP_CFLAGS])
 
 
 AC_CHECK_HEADER([tiff.h],
@@ -57,42 +58,6 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
 		[AC_MSG_ERROR([unable to link])]
 )
 
-
-#************************************************************
-# Check for Intel Performance Primitives Library
-
-AC_ARG_ENABLE([intel-ipp],
-     [  --enable-intel-ipp    enable Intel Integrated Performance Primitives],
-     [case "${enableval}" in
-       yes) ipp=true ;;
-       no)  ipp=false ;;
-       *) AC_MSG_ERROR([bad value ${enableval} for --enable-intel-ipp]) ;;
-     esac],[ipp=true])
-AM_CONDITIONAL([ENABLE_IPP], [test x$ipp = xtrue])
-
-INTEL_IPP=false
-
-if test "x$ipp" = xtrue; then
-AC_CHECK_HEADERS( ippi.h,
-       AC_SEARCH_LIBS(
-               ippiResizeLanczos_8u_C3R,
-               ippi,
-               INTEL_IPP=true;LIBS="$LIBS -lippcore -lipps -lippcc",
-               INTEL_IPP=false,-lippcore -lipps),
-	INTEL_IPP=false
-)
-fi
-
-AM_CONDITIONAL([ENABLE_INTEL_IPP],[test x$INTEL_IPP=xtrue])
-
-
-AC_CHECK_LIB([m],[cos])
-AC_CHECK_LIB([gslcblas],[cblas_dgemm])
-AC_CHECK_LIB([gsl],[gsl_blas_dgemm])
-
-AC_CHECK_HEADERS([gsl/gsl_spline.h])
-
-AC_SUBST(INCLUDES)
 AC_SUBST(LIBS)
 AC_CONFIG_FILES([Makefile \
 		 src/Makefile])

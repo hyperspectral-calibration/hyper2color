@@ -31,12 +31,13 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
+#include <ctype.h>
+#include <limits.h>
 
 #include <math.h>
-#include <sys/mman.h>
-#include <gsl/gsl_errno.h>
-#include <gsl/gsl_spline.h>
-#include <gsl/gsl_integration.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include "tiffio.h"
 
 
@@ -94,7 +95,7 @@ void help( void ){
 
 /* Function to calculate the blackbody spectrum for a particular temperature
    for the desired wavelength, which should be given in nm
-*/
+ */
 double calculate_power_spectrum( int bbTemp, int wavelength ){
 
   double power;
@@ -106,33 +107,38 @@ double calculate_power_spectrum( int bbTemp, int wavelength ){
 }
 
 
-typedef struct { gsl_spline* s; gsl_interp_accel *a; double *cie; double *power; } my_f_params;
+/* Linear interpolation into a 1nm-tabulated function.
+   table[i*stride] holds the value at wavelength (base + i) nm, with n
+   table entries. The result is clamped to the first/last table entry for
+   wavelengths outside the table range. Used to evaluate the CIE colour
+   matching functions and the illuminant at arbitrary (generally
+   non-integer) sensor band centre wavelengths
+ */
+static double wlinterp( double w, const double *table, int stride, int base, int n ){
 
+  double x = w - base;
+  if( x <= 0.0 ) return table[0];
+  if( x >= n - 1 ) return table[(n - 1) * stride];
+  int i = (int)x;
+  double f = x - i;
 
-double f( double x, void *p ){
-   my_f_params *params = (my_f_params*) p;
-   gsl_spline* spline = (gsl_spline*) params->s;
-   gsl_interp_accel* acc = (gsl_interp_accel*) params->a;
-   double* match = (double*) params->cie;
-   double* power = (double*) params->power;
-
-   double result = gsl_spline_eval(spline, x, acc);
-   result = result * match[(int)x-360] * power[(int)x-360];
-
-   return result;
+  return (1.0 - f) * table[i * stride] + f * table[(i + 1) * stride];
 }
+
+
 
 
 int main( int argc, char *argv[] )
 {
   int c;
-  int digit_optind = 0;
-  int i, n, j, k;
+  int n, k;
 
   int width = 0;
   int height = 0;
   int bands = 0;
   double *wavelengths = NULL;
+  size_t wavelength_count = 0;
+  size_t wavelength_capacity = 0;
 
   int verbose = 0;
   FILE *in = NULL;
@@ -162,7 +168,6 @@ int main( int argc, char *argv[] )
    */
   while( 1 ) {
 
-    int this_option_optind = optind ? optind : 1;
     int option_index = 0;
     static struct option long_options[] = {
       {"input", 1, 0, 'i'},
@@ -194,7 +199,7 @@ int main( int argc, char *argv[] )
       if( ! ( in = fopen( optarg, "rb" ) ) ){
 	help();
 	printf( "Unable to open input image file: '%s'\n\n", optarg );
-	exit( 1 );
+	exit( EXIT_FAILURE );
       }
       break;
 
@@ -204,7 +209,7 @@ int main( int argc, char *argv[] )
       if( ! ( out = TIFFOpen( optarg, "w" ) ) ){
 	help();
 	printf( "Unable to open output image file: '%s'\n\n", optarg );
-	exit( 1 );
+	exit( EXIT_FAILURE );
       }
       break;
 
@@ -266,29 +271,59 @@ int main( int argc, char *argv[] )
       break;
 
     case 'w':
-      /* Wavelengths: comma separated list with no spaces
+      /* Wavelengths: comma separated list
        */
+      if( wavelengths ){
+	free( wavelengths );
+	wavelengths = NULL;
+	wavelength_count = 0;
+	wavelength_capacity = 0;
+      }
+
       char* u = strdup( optarg );
+      if( !u ){
+	perror( "strdup" );
+	exit( EXIT_FAILURE );
+      }
 
-      /* Remove any white space
-       */
-      char* s = u;
-      char* d = s;
-      do {
-        while (*d == ' ') {
-	  ++d;
-        }
-      } while (*s++ = *d++);
-      s = u;
+      char* token = u;
+      while( 1 ){
+	char* comma = strchr( token, ',' );
+	if( comma ) *comma = '\0';
 
-      /* Tokenize our string and load into an array
-       */
-      char* token = strtok(s, ",");
-      wavelengths = malloc( sizeof(double)*bands );
-      int n = 0;
-      while( token ){
-	wavelengths[n++] = atof( token );
-	token = strtok(NULL, ",");
+	char* start = token;
+	while( isspace( (unsigned char)*start ) ) start++;
+	char* end;
+	double wavelength = strtod( start, &end );
+	while( isspace( (unsigned char)*end ) ) end++;
+
+	if( start == end || *end != '\0' || !isfinite( wavelength ) ){
+	  fprintf( stderr, "Error: invalid wavelength '%s'\n", start );
+	  free( u );
+	  exit( EXIT_FAILURE );
+	}
+
+	if( wavelength_count == wavelength_capacity ){
+	  size_t new_capacity = wavelength_capacity ? wavelength_capacity * 2 : 16;
+	  double* new_wavelengths = realloc( wavelengths, new_capacity * sizeof( *wavelengths ) );
+	  if( !new_wavelengths ){
+	    perror( "realloc" );
+	    free( u );
+	    exit( EXIT_FAILURE );
+	  }
+	  wavelengths = new_wavelengths;
+	  wavelength_capacity = new_capacity;
+	}
+
+	wavelengths[wavelength_count++] = wavelength;
+	if( !comma ) break;
+	token = comma + 1;
+      }
+
+      free( u );
+      if( wavelength_count == 0 ){
+	fprintf( stderr, "Error: -w requires at least one wavelength\n" );
+	exit( EXIT_FAILURE );
       }
       break;
 
@@ -311,7 +346,7 @@ int main( int argc, char *argv[] )
     default:
       help();
       printf ("?? getopt returned character code 0%o ??\n", c);
-      exit( 1 );
+      exit( EXIT_FAILURE );
     }
 
   }
@@ -324,7 +359,7 @@ int main( int argc, char *argv[] )
     if( !in ) printf( "No input image specified\n" );
     if( !out ) printf( "No output image specified\n" );
     printf( "\n" );
-    exit( 1 );
+    exit( EXIT_FAILURE );
   }
 
 
@@ -333,7 +368,7 @@ int main( int argc, char *argv[] )
    */
   hyspex_header header;
 
-  if( width==0 && height==0 && bands==0 ){
+  if( width == 0 || height == 0 || ( bands == 0 && !wavelengths ) ){
     parse_hyspex_header( in, &header );
   }
 
@@ -392,15 +427,32 @@ int main( int argc, char *argv[] )
 
   if( width != 0 ) header.samples = width;
   if( height != 0 ) header.scanlines = height;
+  if( wavelengths ){
+    if( bands != 0 && (size_t)bands != wavelength_count ){
+      fprintf( stderr, "Error: -c specifies %d bands but -w provides %zu wavelengths\n", bands, wavelength_count );
+      exit( EXIT_FAILURE );
+    }
+    if( wavelength_count > INT_MAX ){
+      fprintf( stderr, "Error: too many wavelengths specified\n" );
+      exit( EXIT_FAILURE );
+    }
+    bands = (int)wavelength_count;
+    header.bands = bands;
+    header.wavelengths = wavelengths;
+    header.bpp = 2;
+  }
   if( bands != 0 ){
     header.bands = bands;
-    if( wavelengths ) header.wavelengths = wavelengths;
-    else{
+    if( !wavelengths ){
       /* Otherwise set some defaults for Hyspex VNIR cameras
        */
       if( bands == 40 ) header.wavelengths = (double*) wavelengths40;
       else if( bands == 80 ) header.wavelengths = (double*) wavelengths80;
       else if( bands == 160 ) header.wavelengths = (double*) wavelengths160;
+      else{
+        fprintf( stderr, "No default wavelengths for %d bands; please specify them with the -w option\n", bands );
+        exit( EXIT_FAILURE );
+      }
     }
     header.bpp = 2;
   }
@@ -418,9 +470,6 @@ int main( int argc, char *argv[] )
   }
 
 
-  unsigned short *scanline_spectrum;
-  scanline_spectrum = malloc( header.samples * sizeof(unsigned short) * header.bands );
-
   /* Determine the range of wavelengths we can use
    */
   int firstwav = ceil( header.wavelengths[0] ) - 10;
@@ -431,59 +480,22 @@ int main( int argc, char *argv[] )
   if( finalwav > maxwav ) finalwav = maxwav;       // Limit this to maximum wavelength in CIE standards
   if( verbose ) printf( "Integrating between %d and %d nm for color calculation\n", firstwav, finalwav );
 
-  double spectrum[320];
 
   /* Load up our illuminant power spectrum
    */
   double power_spectrum[531][2];
   int k0 = D65[0][0];
 
+
   /* Load the appropriate power spectrum for our wavelength range
    */
   for( k=k0; k<=finalwav; k++ ){                  // k = wavelength in nm
 
     power_spectrum[k-k0][0] = k;
-
     if( temperature == -1 ) power_spectrum[k-k0][1] = CIE_A[k-k0][1];
     else if( temperature == 6504 ) power_spectrum[k-k0][1] = D65[k-k0][1];
     else power_spectrum[k-k0][1] = calculate_power_spectrum( temperature, k );
   }
-
-
-  int tr = firstwav - cie_color_match[0][0];    // Array offset for CIE color matching function
-  int te = firstwav - power_spectrum[0][0];     // Array offset for power spectrum
-
-
-  /* Calculate CIE normalization only once using the sum of CIE y * power spectrum
-   */
-  double norm = 0.0;
-  int step = 5;     // Interpolation step
-
-  for( k=0; k<=finalwav-firstwav; k+=step ){
-    norm += cie_color_match[tr+k][2] * power_spectrum[te+k][1];
-  }
-
-
-  double power[471];
-  for( k=0; k<471; k++ ){
-    power[k] = power_spectrum[k+60][1];
-  }
-
-
-  double X_match[471];
-  for( k=0; k<471; k++ ){
-    X_match[k] = cie_color_match[k][1];
-  }
-  double Y_match[471];
-  for( k=0; k<471; k++ ){
-    Y_match[k] = cie_color_match[k][2];
-  }
-  double Z_match[471];
-  for( k=0; k<471; k++ ){
-    Z_match[k] = cie_color_match[k][3];
-  }
-
-
 
 
   /* First define our bits per sample and format
@@ -503,15 +515,6 @@ int main( int argc, char *argv[] )
     bits_per_sample = 8;
     sample_format = SAMPLEFORMAT_UINT;
   }
-
-
-  /* Allocate memory for the color values of a single scan line
-   */
-  void *calculated_color = NULL;
-
-  if( bits_per_sample == 32 ) calculated_color = malloc( sizeof(float)*header.samples*3 );
-  else if( bits_per_sample == 16 ) calculated_color = malloc( sizeof(unsigned short)*header.samples*3 );
-  else calculated_color = malloc( sizeof(unsigned char)*header.samples*3 );
 
 
   /* Set basic TIFF metadata tags
@@ -557,177 +560,289 @@ int main( int argc, char *argv[] )
   //  TIFFSetField( out, TIFFTAG_ROWSPERSTRIP, TIFFDefaultStripSize( out, header.samples*3 ) );
 
 
-  /* Set up our integration function
-  gsl_function F;
-  F.function = &f;
-  gsl_integration_workspace *w = gsl_integration_workspace_alloc( 2000 );
+  /* Precompute the per-band colour weights (CMF x illuminant) at the actual
+     sensor band centre wavelengths. This works for any number of bands and
+     any band spacing (uniform or not, including wavelengths supplied with
+     the -w option): only the bands whose centre wavelengths fall within the
+     CIE table range are used, and the integral of spectrum x weight is
+     evaluated as a trapezoid sum over those bands, with the panel widths
+     derived from the (possibly irregular) band spacing. The CMF and
+     illuminant are linearly interpolated from their 1nm tables because the
+     band centres are generally non-integer wavelengths.
+   */
+
+  /* Clamp integration bounds to the CIE table range and the data range
+   */
+  double lo = ( firstwav > header.wavelengths[0] ) ? firstwav : header.wavelengths[0];
+  double hi = ( finalwav < header.wavelengths[header.bands-1] ) ? finalwav : header.wavelengths[header.bands-1];
+
+  /* Select the usable bands
+   */
+  int nsel = 0;
+  for( k = 0; k < header.bands; k++ ){
+    if( header.wavelengths[k] >= lo && header.wavelengths[k] <= hi ) nsel++;
+  }
+  if( nsel < 2 ){
+    fprintf( stderr,
+             "Error: only %d bands fall within the usable wavelength range "
+             "(%.2f-%.2f nm); at least 2 are required\n",
+             nsel, (double)firstwav, (double)maxwav );
+    exit( EXIT_FAILURE );
+  }
+
+  int *selidx = NULL;         /* original band index of each selected band */
+  double *weightX = NULL, *weightY = NULL, *weightZ = NULL;
+  double norm = 0.0;
+
+  int m;
+  selidx = malloc( sizeof(int) * nsel );
+  weightX = malloc( sizeof(double) * nsel );
+  weightY = malloc( sizeof(double) * nsel );
+  weightZ = malloc( sizeof(double) * nsel );
+  m = 0;
+  for( k = 0; k < header.bands; k++ ){
+    if( header.wavelengths[k] >= lo && header.wavelengths[k] <= hi ) selidx[m++] = k;
+  }
+
+  /* Warn if the band wavelengths are not strictly increasing, since the
+     trapezoid panel widths assume they are sorted
   */
-
-
-  /* Initialize our GSL interpolation structures
-   */
-  gsl_interp_accel *acc = gsl_interp_accel_alloc();
-  gsl_spline *spline = gsl_spline_alloc( gsl_interp_akima, header.bands );
-
-
-  /* Loop through our pixels and calculate the CIE XYZ
-   */
-  for( j=0; j<header.scanlines; j++ ){
-
-    /* Load an entire line in BIL (Band Interleaved Line) format
-     */
-    n = load_hyspex_bil( in, &header, scanline_spectrum, j );
-    if( n != header.samples*header.bands ) printf( "Error reading BIL\n" );
-
-
-    /* Loop through each pixel on this line
-     */
-    for( i=0; i<header.samples; i++ ){
-
-      /* Extract the spectral values for pixel i, j
-       */
-      for( k=0; k<header.bands; k++ ){
-	n = i + header.samples*k;
-	if( header.bpp == 2 ) spectrum[k] = (double)scanline_spectrum[n] / 65535.0;
-	else spectrum[k] = (double)scanline_spectrum[n];
-      }
-
-      /* Interpolate using GSL
-       */
-      gsl_spline_init( spline, header.wavelengths, spectrum, header.bands );
-
-      /* Set our X, Y and Z to zero
-       */
-      double X, Y, Z;
-      double val;
-      X = Y = Z = 0.0;
-
-      /* Integrate over each wavelength
-       */
-      for( k=0; k<=finalwav-firstwav; k+=step ){
-
-	if( k+firstwav >= header.wavelengths[0] ) val = gsl_spline_eval(spline, k+firstwav, acc);
-	else val = spectrum[0];
-
-	if( val < 0 ) val = 0.0;
-	if( val > 1.0 ) val = 1.0;
-
-	X += val * cie_color_match[tr+k][1] * power_spectrum[te+k][1];
-	Y += val * cie_color_match[tr+k][2] * power_spectrum[te+k][1];
-	Z += val * cie_color_match[tr+k][3] * power_spectrum[te+k][1];
-      }
-
-      /* X, Y, Z values need to be multiplied by 100 and normalized
-       */
-      float XX = (float)( (X * 100.0) / (norm) );
-      float YY = (float)( (Y * 100.0) / (norm) );
-      float ZZ = (float)( (Z * 100.0) / (norm) );
-
-
-      /* Pixel index
-       */
-      int index = i * 3;
-
-
-      /* Convert to RGB (sRGB or AdobeRGB)
-       */
-      if( colorspace == PHOTOMETRIC_RGB ){
-
-	float R, G, B;
-
-	// Use appropriate color conversion matrix depending on color space and color temperature
-	if( icc_profile == 2 ){
-	  if( temperature == 5000 ) XYZ2RGB(XYZ_AdobeRGB_matrix_D50,XX,YY,ZZ,&R,&G,&B);
-	  else                      XYZ2RGB(XYZ_AdobeRGB_matrix_D65,XX,YY,ZZ,&R,&G,&B);
-
-	  AdobeRGB_Gamma( &R, &G, &B );
-	}
-	else{
-	  if( temperature == 5000 ) XYZ2RGB(XYZ_sRGB_matrix_D50,XX,YY,ZZ,&R,&G,&B);
-	  else                      XYZ2RGB(XYZ_sRGB_matrix_D65,XX,YY,ZZ,&R,&G,&B);
-
-	  sRGB_Gamma( &R, &G, &B );
-	}
-
-	if( bits_per_sample == 32 ){
-	  ((float*)calculated_color)[index]     = R;
-	  ((float*)calculated_color)[index + 1] = G;
-	  ((float*)calculated_color)[index + 2] = B;
-	}
-	else if( bits_per_sample == 16 ){
-	  ((unsigned short*)calculated_color)[index]     = (unsigned short)( R * 65535.0 );
-	  ((unsigned short*)calculated_color)[index + 1] = (unsigned short)( G * 65535.0 );
-	  ((unsigned short*)calculated_color)[index + 2] = (unsigned short)( B * 65535.0 );
-	}
-	else{
-	  ((unsigned char*)calculated_color)[index]     = (unsigned char)( R * 255.0 );
-	  ((unsigned char*)calculated_color)[index + 1] = (unsigned char)( G * 255.0 );
-	  ((unsigned char*)calculated_color)[index + 2] = (unsigned char)( B * 255.0 );
-	}
-      }
-
-      // CIE L*a*b* color space
-      else{
-	float L, a, b;
-	XYZ2LAB(XX,YY,ZZ,&L,&a,&b);
-
-	if( bits_per_sample == 8 ){
-	  ((unsigned char*)calculated_color)[index]     = (unsigned char)( L * 2.55 );
-	  ((unsigned char*)calculated_color)[index + 1] = (signed char) (a);
-	  ((unsigned char*)calculated_color)[index + 2] = (signed char) (b);
-	}
-	else if( bits_per_sample == 16 ){
-	  ((unsigned short*)calculated_color)[index]     = (unsigned short)( L * 655.35 );
-	  ((unsigned short*)calculated_color)[index + 1] = (signed short)( a * 255.0 );
-	  ((unsigned short*)calculated_color)[index + 2] = (signed short)( b * 255.0 );
-	}
-	else{
-          ((float*)calculated_color)[index]     = L;
-          ((float*)calculated_color)[index + 1] = a;
-	  ((float*)calculated_color)[index + 2] = b;
-	}
-      }
-    }
-
-
-    /* Write out a whole scanline
-     */
-    if( TIFFWriteScanline(out, (void*) calculated_color, j, 0) == -1 ){
-      printf( "TIFF write error at scanline %d \n", j );
+  for( m = 1; m < nsel; m++ ){
+    if( header.wavelengths[selidx[m]] <= header.wavelengths[selidx[m-1]] ){
+      fprintf( stderr, "Warning: band wavelengths are not strictly increasing at band %d; results may be wrong\n", selidx[m] );
       break;
     }
+  }
 
+  /* Per-band trapezoid panel width and colour weight (CMF x illuminant)
+   */
+  int nmatch = sizeof(cie_color_match) / (sizeof(double) * 4);
 
-    /* Report progress
-     */
-    if( verbose ){
-      printf( "Processing: %.2f\%%\r", (float)(j*100.0/header.scanlines) );
-      fflush( stdout );
-    }
+  for( m = 0; m < nsel; m++ ){
 
+    double w = header.wavelengths[selidx[m]];
+    double pw;
+
+    if( m == 0 ) pw = 0.5 * ( header.wavelengths[selidx[1]] - header.wavelengths[selidx[0]] );
+    else if( m == nsel-1 ) pw = 0.5 * ( header.wavelengths[selidx[nsel-1]] - header.wavelengths[selidx[nsel-2]] );
+    else pw = 0.5 * ( header.wavelengths[selidx[m+1]] - header.wavelengths[selidx[m-1]] );
+
+    double cx = wlinterp( w, &cie_color_match[0][1], 4, (int)cie_color_match[0][0], nmatch );
+    double cy = wlinterp( w, &cie_color_match[0][2], 4, (int)cie_color_match[0][0], nmatch );
+    double cz = wlinterp( w, &cie_color_match[0][3], 4, (int)cie_color_match[0][0], nmatch );
+    double e  = wlinterp( w, &power_spectrum[0][1], 2, (int)power_spectrum[0][0],
+                          finalwav - (int)power_spectrum[0][0] + 1 );
+    weightX[m] = pw * cx * e;
+    weightY[m] = pw * cy * e;
+    weightZ[m] = pw * cz * e;
+    norm += weightY[m];
+  }
+
+  if( verbose ) printf( "Integrating over %d usable bands\n", nsel );
+
+  if( !isfinite( norm ) || norm <= 0.0 ){
+    fprintf( stderr, "Error: invalid color normalization for selected wavelengths\n" );
+    exit( EXIT_FAILURE );
   }
 
 
-  /* Free our interpolator
+  /* Buffers for one scanline of raw data and its color output.
+     The output buffer is written in pixel order by the threads and
+     the scanline is written to the TIFF file in scanline order, so
+     the file layout matches the original sequential version.
    */
-  gsl_spline_free (spline);
-  gsl_interp_accel_free (acc);
+  unsigned short *scanline_spectrum = malloc( (size_t)header.samples * sizeof(unsigned short) * header.bands );
+  size_t calc_bytes = (size_t)header.samples * 3 * ( ( bits_per_sample == 32 ) ? sizeof(float)
+			 : ( bits_per_sample == 16 ) ? sizeof(unsigned short) : sizeof(unsigned char) );
+  void *calculated_color = malloc( calc_bytes );
+
+  /* Parallel colour computation. The scanline load and the TIFF write
+     stay on the master thread so that scanlines are always written in
+     order; only the per-pixel colour computation is shared between all
+     threads. The parallel region stays alive across all scanlines and
+     each thread has its own spectrum buffer. The explicit barriers
+     keep the load/compute/write handoff safe, and the loop counter j is
+     private to every thread so the region always exits cleanly.
+   */
+  #ifdef _OPENMP
+  #pragma omp parallel
+  #endif
+  {
+    double *spectrum_t = malloc( sizeof(double) * header.bands );
+#ifdef _OPENMP
+    int t = omp_get_thread_num();
+#else
+    int t = 0;
+#endif
+
+    for( int j=0; j<header.scanlines; j++ ){
+
+      /* Load an entire line in BIL (Band Interleaved Line) format on the
+         master thread, before the workers read it.
+       */
+      if( t == 0 ){
+	int nread = load_hyspex_bil( in, &header, scanline_spectrum, j );
+	if( nread != header.samples*header.bands ) printf( "Error reading BIL\n" );
+      }
+      /* All threads wait until the line is loaded */
+      #ifdef _OPENMP
+      #pragma omp barrier
+      #endif
+
+      /* Loop through each pixel on this line. The implicit barrier at
+	 the end of the worksharing for guarantees that every pixel has
+	 been written to calculated_color before the master writes the
+	 scanline.
+       */
+      #ifdef _OPENMP
+      #pragma omp for schedule(static)
+      #endif
+      for( int i=0; i<header.samples; i++ ){
+
+	/* Extract the spectral values for pixel i, j
+	 */
+	for( int b=0; b<header.bands; b++ ){
+	  int idx = i + header.samples*b;
+	  if( header.bpp == 2 ) spectrum_t[b] = (double)scanline_spectrum[idx] / 65535.0;
+	  else spectrum_t[b] = (double)scanline_spectrum[idx];
+	}
+
+	/* Compute the CIE XYZ tristimulus as a weighted sum over the
+	   sensor bands that fall within the CIE table range.  Each weight
+	   WX/WY/WZ already includes its trapezoid panel width (derived
+	   from the actual, possibly irregular, band spacing), so a pixel
+	   is just a dot product of the clipped reflectance with the
+	   precomputed weights. Works for any number of bands and any band
+	   spacing, including wavelengths supplied with the -w option.
+	 */
+	double X = 0.0, Y = 0.0, Z = 0.0;
+
+	for( int m = 0; m < nsel; m++ ){
+	  double s = spectrum_t[selidx[m]];
+	  if( s < 0.0 ) s = 0.0;
+	  if( s > 1.0 ) s = 1.0;
+	  X += s * weightX[m];
+	  Y += s * weightY[m];
+	  Z += s * weightZ[m];
+	}
+
+	/* X, Y, Z values need to be multiplied by 100 and normalized
+	 */
+	float XX = (float)( (X * 100.0) / (norm) );
+	float YY = (float)( (Y * 100.0) / (norm) );
+	float ZZ = (float)( (Z * 100.0) / (norm) );
 
 
-  /* Free our line of color output values
+	/* Pixel index
+	 */
+	int index = i * 3;
+
+
+	/* Convert to RGB (sRGB or AdobeRGB)
+	 */
+	if( colorspace == PHOTOMETRIC_RGB ){
+
+	  float R, G, B;
+
+	  /* Use appropriate color conversion matrix depending on color space and color temperature
+	   */
+	  if( icc_profile == 2 ){
+	    if( temperature == 5000 ) XYZ2RGB(XYZ_AdobeRGB_matrix_D50,XX,YY,ZZ,&R,&G,&B);
+	    else                      XYZ2RGB(XYZ_AdobeRGB_matrix_D65,XX,YY,ZZ,&R,&G,&B);
+
+	    AdobeRGB_Gamma( &R, &G, &B );
+	  }
+	  else{
+	    if( temperature == 5000 ) XYZ2RGB(XYZ_sRGB_matrix_D50,XX,YY,ZZ,&R,&G,&B);
+	    else                      XYZ2RGB(XYZ_sRGB_matrix_D65,XX,YY,ZZ,&R,&G,&B);
+
+	    sRGB_Gamma( &R, &G, &B );
+	  }
+
+	  if( bits_per_sample == 32 ){
+	    ((float*)calculated_color)[index]     = R;
+	    ((float*)calculated_color)[index + 1] = G;
+	    ((float*)calculated_color)[index + 2] = B;
+	  }
+	  else if( bits_per_sample == 16 ){
+	    ((unsigned short*)calculated_color)[index]     = (unsigned short)( R * 65535.0 );
+	    ((unsigned short*)calculated_color)[index + 1] = (unsigned short)( G * 65535.0 );
+	    ((unsigned short*)calculated_color)[index + 2] = (unsigned short)( B * 65535.0 );
+	  }
+	  else{
+	    ((unsigned char*)calculated_color)[index]     = (unsigned char)( R * 255.0 );
+	    ((unsigned char*)calculated_color)[index + 1] = (unsigned char)( G * 255.0 );
+	    ((unsigned char*)calculated_color)[index + 2] = (unsigned char)( B * 255.0 );
+	  }
+	}
+
+	/* CIE L*a*b* color space
+	 */
+	else{
+	  float L, a, b;
+	  XYZ2LAB(XX,YY,ZZ,&L,&a,&b);
+
+	  if( bits_per_sample == 8 ){
+	    ((unsigned char*)calculated_color)[index]     = (unsigned char)( L * 2.55 );
+	    ((unsigned char*)calculated_color)[index + 1] = (signed char) (a);
+	    ((unsigned char*)calculated_color)[index + 2] = (signed char) (b);
+	  }
+	  else if( bits_per_sample == 16 ){
+	    ((unsigned short*)calculated_color)[index]     = (unsigned short)( L * 655.35 );
+	    ((unsigned short*)calculated_color)[index + 1] = (signed short)( a * 255.0 );
+	    ((unsigned short*)calculated_color)[index + 2] = (signed short)( b * 255.0 );
+	  }
+	  else{
+            ((float*)calculated_color)[index]     = L;
+            ((float*)calculated_color)[index + 1] = a;
+	    ((float*)calculated_color)[index + 2] = b;
+	  }
+	}
+      }
+
+
+      /* Write out a whole scanline in scanline order and report progress
+       */
+      if( t == 0 ){
+	if( TIFFWriteScanline(out, (void*) calculated_color, j, 0) == -1 ){
+	  printf( "TIFF write error at scanline %d \n", j );
+	}
+	if( verbose ){
+	  printf( "Processing: %.2f\%%\r", (float)(j*100.0/header.scanlines) );
+	  fflush( stdout );
+	}
+      }
+      /* All threads wait until the scanline has been written before the
+	 next line overwrites the colour buffer.
+       */
+      #ifdef _OPENMP
+      #pragma omp barrier
+      #endif
+
+    }
+
+    /* Free per-thread resources
+     */
+    free( spectrum_t );
+  }
+
+
+  /* Free allocated buffers
    */
   free( calculated_color );
   free( scanline_spectrum );
+  free( selidx );
+  free( weightX );
+  free( weightY );
+  free( weightZ );
+  free( wavelengths );
 
-
-  /* Free our integration workspace
-  gsl_integration_workspace_free( w );
-  */
 
   /* Close our files
    */
   if( in ) fclose( in );
   if( out ) TIFFClose( out );
+
 
   return 0;
 }
